@@ -1,78 +1,104 @@
 #include "mbed.h"
 #include "PID.hpp"
-uint8_t DATA[8] = {};
+
 InterruptIn button(PC_8);       // リミットスイッチ
 InterruptIn button_reset(PC_9); // 起動スイッチ
-BufferedSerial pc(USBTX, USBRX, 115200);
-CAN can(PA_11, PA_12, (int)1e6);
 int DJI_ID = 0x200;
 
-int16_t motor_1 = 0;
-int16_t motor_2 = 0;
-int16_t motor_3 = 0;
-int16_t speed = 0; // 16ビットの最大値
+CAN can(PA_11, PA_12, (int)1e6);
+volatile int32_t encoder_position = 0;
 
-int reset;
-int sw;
-
-int16_t sokudo = 0;
-int16_t mokuhyou = 0;
-const float kp = 0.1;
-const float ki = 0.035;
-const float kd = 0.0;
-const float sample_time = 0.02; // 20ms sample time
-
-PID pid_controller(kp, ki, kd, sample_time);
-
-void Switch_Stop()
+DigitalIn encoderA(PB_13); // A相のピン A0からA5
+DigitalIn encoderB(PB_14); // B相のピン A0からA5
+int counter = 0;
+int counter_r = 0;
+bool prevStateA = 0;
+bool prevStateB = 0;
+uint8_t DATA[8] = {0};
+int16_t speed = 0;
+// sw_stopが押されたときに実行される割り込みハンドラ
+void stop_motor()
 {
-    printf("Stop\n");
     speed = 0; // 速度0
+    for (int i = 0; i < 8; i += 2)
+    {
+        DATA[i] = (speed >> 8) & 0xFF; // 上位バイト
+        DATA[i + 1] = speed & 0xFF;    // 下位バイト
+    }
+}
 
-    DATA[0] = (speed >> 8) & 0xFF; // 上位バイト
-    DATA[1] = speed & 0xFF;        // 下位バイト
-    DATA[2] = (speed >> 8) & 0xFF; // 上位バイト
-    DATA[3] = speed & 0xFF;        // 下位バイト
-    DATA[4] = (speed >> 8) & 0xFF; // 上位バイト
-    DATA[5] = speed & 0xFF;        // 下位バイト
+void reset_can()
+{
+    can.reset();
 }
 
 int main()
 {
     button.mode(PullUp);
     button_reset.mode(PullUp);
-
-    button.fall(&Switch_Stop); // 割り込み設定
+    BufferedSerial pc(USBTX, USBRX, 115200);
+    auto pre = HighResClock::now();
+    auto pre_1 = pre;
 
     while (1)
     {
+        auto now = HighResClock::now();
+        bool sw = button_reset.read();
+        bool sw_stop = button.read();
 
-        auto now = HighResClock::now(); // タイマー設定
-        static auto pre = now;
-        bool sw = button_reset.read(); // ボタン読み取り
-
-        if (now - pre > 500ms && sw == 0)
+        if (sw_stop == 0 && now - pre > 500ms)
         {
-            printf("Restart\n");
-            speed = 16000; // 8191; // 速度MAX
-            // mokuhyou = 12543;
-            // float output = pid_controller.calculate(mokuhyou, sokudo);
-            // printf("speed=%d\n", output);
-            // int16_t mokuhyou_int16 = static_cast<int16_t>(output);
-            printf("speed=%d\n", speed);
-
-            DATA[0] = (speed >> 8) & 0xFF; // 上位バイト
-            DATA[1] = speed & 0xFF;        // 下位バイト
-            DATA[2] = (speed >> 8) & 0xFF; // 上位バイト
-            DATA[3] = speed & 0xFF;        // 下位バイト
-            DATA[4] = (speed >> 8) & 0xFF; // 上位バイト
-            DATA[5] = speed & 0xFF;        // 下位バイト
-            // mokuhyou_int16 = 0;
-            // sokudo = 0;
-            // output = 0;
+            printf("STOP\n");
+            stop_motor();
             pre = now;
         }
-        CANMessage msg(DJI_ID, DATA, 8); // 送信
-        can.write(msg);
+
+        if (now - pre > 1000ms && sw == 0)
+        {
+            printf("FIRE\n");
+            counter = 0;
+            // 速度を設定する例
+            speed = 3000; // 速度MAX
+
+            // 符号付き16ビットのエンコード
+            int16_t signed_speed = static_cast<int16_t>(-speed);
+            DATA[0] = (signed_speed >> 8) & 0xFF; // 上位バイト
+            DATA[1] = signed_speed & 0xFF;        // 下位バイト
+            signed_speed = static_cast<int16_t>(speed);
+            DATA[2] = (signed_speed >> 8) & 0xFF; // 上位バイト
+            DATA[3] = signed_speed & 0xFF;        // 下位バイト
+            signed_speed = static_cast<int16_t>(-speed);
+            DATA[4] = (signed_speed >> 8) & 0xFF; // 上位バイト
+            DATA[5] = signed_speed & 0xFF;        // 下位バイト
+            signed_speed = static_cast<int16_t>(speed);
+            DATA[6] = (signed_speed >> 8) & 0xFF; // 上位バイト
+            DATA[7] = signed_speed & 0xFF;        // 下位バイト
+
+            pre = now;   // タイマーリセット
+            reset_can(); // CANコントローラをリセット
+        }
+
+        if (now - pre_1 > 30ms)
+        {
+            CANMessage msg(DJI_ID, DATA, 8);
+            if (can.write(msg))
+            {
+                reset_can(); // CANコントローラをリセット
+                //  printf("OK\n");
+            }
+            else
+            {
+                printf("Can't send Message\n");
+                // 送信失敗時の追加デバッグ情報
+                printf("CAN Bus Error Status: %d\n", can.rderror());
+                printf("CAN Bus Write Error Count: %d\n", can.tderror());
+                if (can.rderror() == 255 || can.tderror() == 249)
+                {
+                    printf("Resetting CAN controller\n");
+                    reset_can(); // CANコントローラをリセット
+                }
+            }
+            pre_1 = now;
+        }
     }
 }
