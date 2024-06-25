@@ -13,9 +13,13 @@ bool flag = false;
 
 int16_t speed_now = 0;
 int16_t target = 0;
-const float kp = 0.1;
+
+const float kp = 0.130;
 const float ki = 0.035;
-const float kd = 0.0;
+const float kd = 0.0055;
+// const float kp = 0.1;
+// const float ki = 0.035;
+// const float kd = 0.0;
 const float sample_time = 0.02; // 20ms sample time
 PID pid_controller(kp, ki, kd, sample_time);
 
