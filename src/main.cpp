@@ -1,100 +1,110 @@
 #include "mbed.h"
 #include "PID.hpp"
 
+int suuti = 0;
+int gohan = 0;
+int16_t sokudo1 = 0;
+int16_t sokudo2 = 0;
+int16_t sokudo3 = 0;
+int16_t sokudo4 = 0;
+int mokuhyou = 0;
+BufferedSerial pc(USBTX, USBRX, 115200);
 CAN can(PA_11, PA_12, (int)1e6);
-CANMessage msg;
+uint8_t DATA[8] = {};
 
-uint8_t DATA[8] = {0};
-int DJI_ID = 0x200;
-
-InterruptIn button_reset(PC_9); // 起動スイッチ
-bool flag = false;
-
-int16_t speed_now = 0;
-int16_t target = 0;
-
-const float kp = 0.88;
-const float ki = 0.30;
-const float kd = 0.001;
+// PID controller parameters
+const float kp = 0.03;
+const float ki = 0.00;
+const float kd = 0.00;
 const float sample_time = 0.02; // 20ms sample time
-PID pid_controller(kp, ki, kd, sample_time);
-
-void stop_motor(int zero)
-{
-    printf("STOP\n");
-    for (int i = 0; i < 8; i += 2)
-    {
-        DATA[i] = (zero >> 8) & 0xFF; // 上位バイト
-        DATA[i + 1] = zero & 0xFF;    // 下位バイト
-    }
-}
+int DJI_ID = 0x1FF;
+// Create PID controller
+PID pid_controller_1(kp, ki, kd, sample_time);
+PID pid_controller_2(kp, ki, kd, sample_time);
+PID pid_controller_3(kp, ki, kd, sample_time);
+PID pid_controller_4(kp, ki, kd, sample_time);
 
 int main()
 {
-    button_reset.mode(PullUp);
-    BufferedSerial pc(USBTX, USBRX, 115200);
+
     auto pre = HighResClock::now();
-    // auto pre_1 = pre;
 
     while (1)
     {
         auto now = HighResClock::now();
-        // auto now_1 = HighResClock::now();
-
-        auto start_time = HighResClock::now(); // PID計算開始時刻を記録
-        target = 6000;
-        while (HighResClock::now() - start_time < 500ms) // 1秒間PID計算を行う
+        CANMessage msg, msg1, msg2;
+        if (pc.readable())
         {
-
-            float output = pid_controller.calculate(target, speed_now);
-            if (target < output)
+            char buf;
+            pc.read(&buf, sizeof(buf));
+            if (buf == 'w')
             {
-                output = target;
+                mokuhyou = 5500;
+                printf("w \n");
             }
-            //  printf("output = %.0f\n", output);
-            int16_t output_int16 = static_cast<int16_t>(-output);
-            DATA[0] = output_int16 >> 8;   // MSB
-            DATA[1] = output_int16 & 0xFF; // LSB
-
-            int16_t output1_int16 = static_cast<int16_t>(output);
-            DATA[2] = output1_int16 >> 8;   // MSB
-            DATA[3] = output1_int16 & 0xFF; // LSB
-            int16_t output2_int16 = static_cast<int16_t>(-output);
-            DATA[4] = output2_int16 >> 8;   // MSB
-            DATA[5] = output2_int16 & 0xFF; // LSB
-
-            int16_t output3_int16 = static_cast<int16_t>(output);
-            DATA[6] = output3_int16 >> 8;   // MSB
-            DATA[7] = output3_int16 & 0xFF; // LSB
-
-            CANMessage msg(DJI_ID, DATA, 8);
-            can.write(msg);
-
-            if (can.read(msg) && msg.id == 0x201)
+            else if (buf == 's')
             {
-                int16_t speed_1 = (msg.data[2] << 8) | msg.data[3];
-                printf("1 = %d\n", speed_1);
+                mokuhyou = 5800;
             }
-            if (can.read(msg) && msg.id == 0x202)
+            else if (buf == 'a')
             {
-                int16_t speed_2 = (msg.data[2] << 8) | msg.data[3];
-                printf("2 = %d\n", speed_2);
+                mokuhyou = 6000;
             }
-            if (can.read(msg) && msg.id == 0x203)
+            else if (buf == 'z')
             {
-                int16_t speed_3 = (msg.data[2] << 8) | msg.data[3];
-                printf("3 = %d\n", speed_3);
+                mokuhyou = 0;
             }
-            if (can.read(msg) && msg.id == 0x204)
-            {
-                int16_t speed_4 = (msg.data[2] << 8) | msg.data[3];
-                printf("4 = %d\n", speed_4);
-            }
-            ThisThread::sleep_for(20ms);
         }
-        stop_motor(0);
-        pre = now;   // 次の計算のために現在時刻を更新
-        flag = true; // 処理完了フラグを立てる
-        break;
+
+        // Calculate PID output
+        float output_1 = pid_controller_1.calculate(mokuhyou, sokudo1);
+        float output_2 = pid_controller_2.calculate(mokuhyou, sokudo2);
+        float output_3 = pid_controller_3.calculate(mokuhyou, sokudo3);
+        float output_4 = pid_controller_4.calculate(mokuhyou, sokudo4);
+
+        int16_t out_1 = static_cast<int16_t>(-output_1);
+        DATA[0] = out_1 >> 8;   // MSB
+        DATA[1] = out_1 & 0xFF; // LSB
+
+        int16_t out_2 = static_cast<int16_t>(output_2);
+        DATA[2] = out_2 >> 8;   // MSB
+        DATA[3] = out_2 & 0xFF; // LSB
+
+        int16_t out_3 = static_cast<int16_t>(-output_3);
+        DATA[4] = out_3 >> 8;   // MSB
+        DATA[5] = out_3 & 0xFF; // LSB
+
+        int16_t out_4 = static_cast<int16_t>(output_4);
+        DATA[6] = out_4 >> 8;   // MSB
+        DATA[7] = out_4 & 0xFF; // LSB
+
+        if (now - pre > 30ms)
+        {
+            CANMessage msg(DJI_ID, DATA, 8);
+            if (can.write(msg))
+            {
+                printf("OK\n");
+            }
+
+            if (can.read(msg1) && msg1.id == 0x205)
+            {
+                sokudo1 = (msg1.data[2] << 8) | msg1.data[3];
+            }
+            if (can.read(msg1) && msg1.id == 0x206)
+            {
+                sokudo2 = (msg1.data[2] << 8) | msg1.data[3];
+            }
+            if (can.read(msg1) && msg1.id == 0x207)
+            {
+                sokudo3 = (msg1.data[2] << 8) | msg1.data[3];
+            }
+            if (can.read(msg2) && msg2.id == 0x208)
+            {
+                sokudo4 = (msg2.data[2] << 8) | msg2.data[3];
+            }
+            printf("sokudo1 = :%d\nsokudo2 = :%d\nsokudo3 = :%d\nsokudo4 = :%d\n", sokudo1, sokudo2, sokudo3, sokudo4);
+            ThisThread::sleep_for(20ms);
+            pre = now;
+        }
     }
 }
