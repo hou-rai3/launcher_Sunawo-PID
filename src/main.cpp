@@ -1,23 +1,20 @@
 #include "mbed.h"
 #include "PID.hpp"
 
-int suuti = 0;
-int gohan = 0;
+int mokuhyou = 0;
 int16_t sokudo1 = 0;
 int16_t sokudo2 = 0;
 int16_t sokudo3 = 0;
 int16_t sokudo4 = 0;
-int mokuhyou = 0;
-BufferedSerial pc(USBTX, USBRX, 115200);
-CAN can(PA_11, PA_12, (int)1e6);
-uint8_t DATA[8] = {};
+
+int DJI_ID = 0x1FF;
 
 // PID controller parameters
 const float kp = 0.03;
 const float ki = 0.00;
 const float kd = 0.00;
 const float sample_time = 0.02; // 20ms sample time
-int DJI_ID = 0x1FF;
+
 // Create PID controller
 PID pid_controller_1(kp, ki, kd, sample_time);
 PID pid_controller_2(kp, ki, kd, sample_time);
@@ -26,6 +23,9 @@ PID pid_controller_4(kp, ki, kd, sample_time);
 
 int main()
 {
+    BufferedSerial pc(USBTX, USBRX, 115200);
+    CAN can(PA_11, PA_12, (int)1e6);
+    uint8_t DATA[8] = {};
 
     auto pre = HighResClock::now();
 
@@ -78,7 +78,7 @@ int main()
         DATA[6] = out_4 >> 8;   // MSB
         DATA[7] = out_4 & 0xFF; // LSB
 
-        if (now - pre > 30ms)
+        if (now - pre > 10ms)
         {
             CANMessage msg(DJI_ID, DATA, 8);
             if (can.write(msg))
@@ -103,8 +103,8 @@ int main()
                 sokudo4 = (msg2.data[2] << 8) | msg2.data[3];
             }
             printf("sokudo1 = :%d\nsokudo2 = :%d\nsokudo3 = :%d\nsokudo4 = :%d\n", sokudo1, sokudo2, sokudo3, sokudo4);
-            ThisThread::sleep_for(20ms);
-            pre = now;
         }
+        ThisThread::sleep_for(20ms);
+        pre = now;
     }
 }
